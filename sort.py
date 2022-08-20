@@ -33,7 +33,7 @@ from filterpy.kalman import KalmanFilter
 np.random.seed(0)
 
 
-def linear_assignment(cost_matrix):
+def linear_assignment(cost_matrix):   # 掉包计算匈牙利算法二分图匹配
   try:
     import lap
     _, x, y = lap.lapjv(cost_matrix, extend_cost=True)
@@ -60,7 +60,7 @@ def iou_batch(bb_test, bb_gt):
   wh = w * h
   o = wh / ((bb_test[..., 2] - bb_test[..., 0]) * (bb_test[..., 3] - bb_test[..., 1])                                      
     + (bb_gt[..., 2] - bb_gt[..., 0]) * (bb_gt[..., 3] - bb_gt[..., 1]) - wh)                                              
-  return(o)  
+  return(o)  # np.array( [ [],[],.. ] )  计算所有m个 detection（bb_test) 与所有n个先验 tracker(bb_gt) 之间的 iou，因此是一个m×n矩阵
 
 
 def convert_bbox_to_z(bbox):  # 传入的bbox为 np.array( [x1,y1,x2,y2,类别分数] )， 见114行。比宣称的 [x1,y1,x2,y2] 多了一项，但没关系
@@ -75,7 +75,7 @@ def convert_bbox_to_z(bbox):  # 传入的bbox为 np.array( [x1,y1,x2,y2,类别�
   y = bbox[1] + h/2.
   s = w * h    #scale is just area
   r = w / float(h)
-  return np.array([x, y, s, r]).reshape((4, 1))
+  return np.array([x, y, s, r]).reshape((4, 1))   # np.array( [ [x],[y],[s],[r] ] )
 
 
 def convert_x_to_bbox(x,score=None):
@@ -106,9 +106,9 @@ class KalmanBoxTracker(object):
     self.kf.H = np.array([[1,0,0,0,0,0,0],[0,1,0,0,0,0,0],[0,0,1,0,0,0,0],[0,0,0,1,0,0,0]])   # 观测矩阵
 
     self.kf.R[2:,2:] *= 10.     # 观测噪声的协方差
-    self.kf.P[4:,4:] *= 1000. #give high uncertainty to the unobservable initial velocities   # 过程噪声的协方差
+    self.kf.P[4:,4:] *= 1000. #give high uncertainty to the unobservable initial velocities   # 初始后验状态的协方差
     self.kf.P *= 10.
-    self.kf.Q[-1,-1] *= 0.01
+    self.kf.Q[-1,-1] *= 0.01    # 过程噪声的协方差
     self.kf.Q[4:,4:] *= 0.01
                                             # 论文中的状态x为 [u, v, s, r, dot(u), dot(v), dot(s)]   其中宽高比r固定，不参与更新
     self.kf.x[:4] = convert_bbox_to_z(bbox) # bbox定义在99行的形参，为 np.array( [x1,y1,x2,y2,类别分数] )。本代码取观测值z为 [u, v, s, r]
@@ -128,21 +128,21 @@ class KalmanBoxTracker(object):
     self.history = []
     self.hits += 1          # 命中
     self.hit_streak += 1    # 连续命中
-    self.kf.update(convert_bbox_to_z(bbox)) # 方法签名：update(z, R=None, H=None)  详见 https://filterpy.readthedocs.io/en/latest/kalman/KalmanFilter.html#filterpy.kalman.KalmanFilter.update
-
+    self.kf.update(convert_bbox_to_z(bbox)) # 关键行：卡尔曼滤波器更新，滤波器内的x修正为下一次的后验状态
+                                            # 方法签名：update(z, R=None, H=None)  详见 https://filterpy.readthedocs.io/en/latest/kalman/KalmanFilter.html#filterpy.kalman.KalmanFilter.update
   def predict(self):
     """
     Advances the state vector and returns the predicted bounding box estimate.
     """
     if((self.kf.x[6]+self.kf.x[2])<=0):
       self.kf.x[6] *= 0.0
-    self.kf.predict() # predict(u=None, B=None, F=None, Q=None) Predict next state (prior) using the Kalman filter state propagation equations. 详见 https://filterpy.readthedocs.io/en/latest/kalman/KalmanFilter.html#filterpy.kalman.KalmanFilter.predict
-    self.age += 1
+    self.kf.predict() # 关键行：卡尔曼滤波器预测先验状态
+    self.age += 1     # predict(u=None, B=None, F=None, Q=None) Predict next state (prior) using the Kalman filter state propagation equations. 详见 https://filterpy.readthedocs.io/en/latest/kalman/KalmanFilter.html#filterpy.kalman.KalmanFilter.predict
     if(self.time_since_update>0):
       self.hit_streak = 0
     self.time_since_update += 1
     self.history.append(convert_x_to_bbox(self.kf.x)) # convert_x_to_bbox(self.kf.x) 返回 np.array( [ [x1,y1,x2,y2] ] )
-    return self.history[-1]     # 返回 np.array( [ [x1,y1,x2,y2] ] )
+    return self.history[-1]     # 返回下一次的先验状态 np.array( [ [x1,y1,x2,y2] ] )
 
   def get_state(self):  # 返回当前状态x（bbox表示）：np.array(  [  [x1,y1,x2,y2]  ]  )
     """
@@ -160,9 +160,9 @@ def associate_detections_to_trackers(detections,trackers,iou_threshold = 0.3):
   if(len(trackers)==0):
     return np.empty((0,2),dtype=int), np.arange(len(detections)), np.empty((0,5),dtype=int)
 
-  iou_matrix = iou_batch(detections, trackers)            # 第一步：计算所有m个 detection 与所有n个 tracker 之间的 iou，因此是一个m×n矩阵
+  iou_matrix = iou_batch(detections, trackers)            # 第一步：计算所有m个 detection 与所有n个先验 tracker 之间的 iou，因此是一个m×n矩阵
 
-  if min(iou_matrix.shape) > 0:                           # 第二步：对iou矩阵用匈牙利算法进行m个 detection 与 n个 tracker 之间的匹配
+  if min(iou_matrix.shape) > 0:                           # 第二步：对iou矩阵用匈牙利算法进行m个 detection 与 n个先验 tracker 之间的匹配
     a = (iou_matrix > iou_threshold).astype(np.int32)
     if a.sum(1).max() == 1 and a.sum(0).max() == 1:
         matched_indices = np.stack(np.where(a), axis=1)
@@ -217,12 +217,12 @@ class Sort(object):
     NOTE: The number of objects returned may differ from the number of detections provided.
     """
     self.frame_count += 1
-    # get predicted locations from existing trackers.               # 第一步：使用匈牙利算法将新的detections与先验trackers进行匹配
+    # get predicted locations from existing trackers.               # 第一步：使用匈牙利算法将当前次观测值detections与当前次先验trackers进行匹配
     trks = np.zeros((len(self.trackers), 5))
     to_del = []
     ret = []
     for t, trk in enumerate(trks):
-      pos = self.trackers[t].predict()[0]           # 关键步：使用卡尔曼滤波生成先验trackers    predict() 返回 np.array( [ [x1,y1,x2,y2] ] )   pos: np.array( [x1,y1,x2,y2] )
+      pos = self.trackers[t].predict()[0]           # 关键步：通过卡尔曼滤波使用前一次的后验trackers生成当前次先验trackers    predict() 返回 np.array( [ [x1,y1,x2,y2] ] )   pos: np.array( [x1,y1,x2,y2] )
       trk[:] = [pos[0], pos[1], pos[2], pos[3], 0]  # trk[:]: np.array( [x1,y1,x2,y2,0] )    trks: np.array( [ [x1,y1,x2,y2,0],[],.. ] )
       if np.any(np.isnan(pos)):
         to_del.append(t)
@@ -231,13 +231,13 @@ class Sort(object):
       self.trackers.pop(t)
     matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets,trks, self.iou_threshold)   # 关键步：调用匈牙利算法
 
-    # update matched trackers with assigned detections              # 第二步：使用卡尔曼滤波将成功匹配的先验trackers和detections融合成后验trackers
+    # update matched trackers with assigned detections              # 第二步：使用卡尔曼滤波将成功匹配的先验trackers和detections融合成当前次后验trackers
     for m in matched:
       self.trackers[m[1]].update(dets[m[0], :])   # self.trackers[m[1]]是 KalmanBoxTracker对象，见240行
 
     # create and initialise new trackers for unmatched detections   # 第三步：给未成功匹配的detections创建并初始化新的trackers
     for i in unmatched_dets:
-        trk = KalmanBoxTracker(dets[i,:])   # dets[i,:]即dets[i]，即 np.array( [x1,y1,x2,y2,类别分数] )
+        trk = KalmanBoxTracker(dets[i,:])   # 关键步：创建并初始化新的trackers   dets[i,:]即dets[i]，即 np.array( [x1,y1,x2,y2,类别分数] )
         self.trackers.append(trk)
     i = len(self.trackers)
     for trk in reversed(self.trackers): # self.trackers是list，下面可能需要从中pop(index)，故从后往前遍历，上一行的i就是index+1
@@ -248,7 +248,7 @@ class Sort(object):
         # remove dead tracklet
         if(trk.time_since_update > self.max_age):
           self.trackers.pop(i)
-    if(len(ret)>0):                                                 # 第四步：返回所有新trackers集合
+    if(len(ret)>0):                                                 # 第四步：返回所有新trackers（当前次更新过的和新增的）集合
       return np.concatenate(ret)  # 返回新展示框集合：np.array( [ [x1,y1,x2,y2,展示id],[],.. ] )    展示id=id+1
     return np.empty((0,5))
 
@@ -288,7 +288,7 @@ if __name__ == '__main__':
     os.makedirs('output')
   pattern = os.path.join(args.seq_path, phase, '*', 'det', 'det.txt')   # 'data/train/*/det/det.txt'
   for seq_dets_fn in glob.glob(pattern):                                # 比如：seq_dets_fn：'data/train/ADL-Rundle-6/det/det.txt'
-    mot_tracker = Sort(max_age=args.max_age, 
+    mot_tracker = Sort(max_age=args.max_age,                # 一个视频建立一个Sort对象
                        min_hits=args.min_hits,
                        iou_threshold=args.iou_threshold) #create instance of the SORT tracker
     seq_dets = np.loadtxt(seq_dets_fn, delimiter=',')                   # 比如：np.array( [ [1,-1,1691.97,381.048,152.23,352.617,0.995616,-1,-1,-1],[],.. ] )
@@ -309,8 +309,8 @@ if __name__ == '__main__':
           plt.title(seq + ' Tracked Targets')
 
         start_time = time.time()
-        trackers = mot_tracker.update(dets)     # 比如：dets: np.array( [ [1691.97, 381.048, 1844.20, 733.665, 0.995616],[],.. ] ) 302行  update返回新后验展示框集合：np.array( [ [x1,y1,x2,y2,展示id],[],.. ] )    展示id=id+1
-        cycle_time = time.time() - start_time
+        trackers = mot_tracker.update(dets)     # 使用卡尔曼滤波用新的观测值dets生成当前帧的后验trackers
+        cycle_time = time.time() - start_time   # 比如：dets: np.array( [ [1691.97, 381.048, 1844.20, 733.665, 0.995616],[],.. ] ) 302行  update返回新后验展示框集合：np.array( [ [x1,y1,x2,y2,展示id],[],.. ] )    展示id=id+1
         total_time += cycle_time
 
         for d in trackers:

@@ -86,9 +86,9 @@ def convert_x_to_bbox(x,score=None):
   w = np.sqrt(x[2] * x[3])
   h = x[2] / w
   if(score==None):
-    return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.]).reshape((1,4))
+    return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.]).reshape((1,4))       # np.array( [ [x1,y1,x2,y2] ] )
   else:
-    return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.,score]).reshape((1,5))
+    return np.array([x[0]-w/2.,x[1]-h/2.,x[0]+w/2.,x[1]+h/2.,score]).reshape((1,5)) # np.array( [ [x1,y1,x2,y2,score] ] )
 
 
 class KalmanBoxTracker(object):
@@ -136,13 +136,13 @@ class KalmanBoxTracker(object):
     """
     if((self.kf.x[6]+self.kf.x[2])<=0):
       self.kf.x[6] *= 0.0
-    self.kf.predict()
+    self.kf.predict() # predict(u=None, B=None, F=None, Q=None) Predict next state (prior) using the Kalman filter state propagation equations. 详见 https://filterpy.readthedocs.io/en/latest/kalman/KalmanFilter.html#filterpy.kalman.KalmanFilter.predict
     self.age += 1
     if(self.time_since_update>0):
       self.hit_streak = 0
     self.time_since_update += 1
-    self.history.append(convert_x_to_bbox(self.kf.x))
-    return self.history[-1]
+    self.history.append(convert_x_to_bbox(self.kf.x)) # convert_x_to_bbox(self.kf.x) 返回 np.array( [ [x1,y1,x2,y2] ] )
+    return self.history[-1]     # 返回 np.array( [ [x1,y1,x2,y2] ] )
 
   def get_state(self):  # 返回当前状态x（bbox表示）：np.array(  [  [x1,y1,x2,y2]  ]  )
     """
@@ -204,10 +204,10 @@ class Sort(object):
     self.max_age = max_age
     self.min_hits = min_hits
     self.iou_threshold = iou_threshold
-    self.trackers = []
+    self.trackers = []                    # self.trackers[]中存储 KalmanBoxTracker对象，见240行
     self.frame_count = 0
 
-  def update(self, dets=np.empty((0, 5))):
+  def update(self, dets=np.empty((0, 5))):  # dets：np.array( [ [x1,y1,x2,y2,score],[],.. ] ) 302行
     """
     Params:
       dets - a numpy array of detections in the format [[x1,y1,x2,y2,score],[x1,y1,x2,y2,score],...]
@@ -217,21 +217,21 @@ class Sort(object):
     NOTE: The number of objects returned may differ from the number of detections provided.
     """
     self.frame_count += 1
-    # get predicted locations from existing trackers.               # 第一步：使用匈牙利算法将新的detections与原有trackers进行匹配
+    # get predicted locations from existing trackers.               # 第一步：使用匈牙利算法将新的detections与先验trackers进行匹配
     trks = np.zeros((len(self.trackers), 5))
     to_del = []
     ret = []
     for t, trk in enumerate(trks):
-      pos = self.trackers[t].predict()[0]
-      trk[:] = [pos[0], pos[1], pos[2], pos[3], 0]
+      pos = self.trackers[t].predict()[0]           # 关键步：使用卡尔曼滤波生成先验trackers    predict() 返回 np.array( [ [x1,y1,x2,y2] ] )   pos: np.array( [x1,y1,x2,y2] )
+      trk[:] = [pos[0], pos[1], pos[2], pos[3], 0]  # trk[:]: np.array( [x1,y1,x2,y2,0] )    trks: np.array( [ [x1,y1,x2,y2,0],[],.. ] )
       if np.any(np.isnan(pos)):
         to_del.append(t)
     trks = np.ma.compress_rows(np.ma.masked_invalid(trks))
-    for t in reversed(to_del):
+    for t in reversed(to_del):  # self.trackers是list，下面可能需要从中pop(index)，故从后往前遍历，t就是index
       self.trackers.pop(t)
     matched, unmatched_dets, unmatched_trks = associate_detections_to_trackers(dets,trks, self.iou_threshold)   # 关键步：调用匈牙利算法
 
-    # update matched trackers with assigned detections              # 第二步：使用卡尔曼滤波更新成功匹配的trackers
+    # update matched trackers with assigned detections              # 第二步：使用卡尔曼滤波将成功匹配的先验trackers和detections融合成后验trackers
     for m in matched:
       self.trackers[m[1]].update(dets[m[0], :])   # self.trackers[m[1]]是 KalmanBoxTracker对象，见240行
 
@@ -286,20 +286,20 @@ if __name__ == '__main__':
 
   if not os.path.exists('output'):
     os.makedirs('output')
-  pattern = os.path.join(args.seq_path, phase, '*', 'det', 'det.txt')
-  for seq_dets_fn in glob.glob(pattern):
+  pattern = os.path.join(args.seq_path, phase, '*', 'det', 'det.txt')   # 'data/train/*/det/det.txt'
+  for seq_dets_fn in glob.glob(pattern):                                # 比如：seq_dets_fn：'data/train/ADL-Rundle-6/det/det.txt'
     mot_tracker = Sort(max_age=args.max_age, 
                        min_hits=args.min_hits,
                        iou_threshold=args.iou_threshold) #create instance of the SORT tracker
-    seq_dets = np.loadtxt(seq_dets_fn, delimiter=',')
-    seq = seq_dets_fn[pattern.find('*'):].split(os.path.sep)[0]
+    seq_dets = np.loadtxt(seq_dets_fn, delimiter=',')                   # 比如：np.array( [ [1,-1,1691.97,381.048,152.23,352.617,0.995616,-1,-1,-1],[],.. ] )
+    seq = seq_dets_fn[pattern.find('*'):].split(os.path.sep)[0]         # 比如：'ADL-Rundle-6'
     
-    with open(os.path.join('output', '%s.txt'%(seq)),'w') as out_file:
-      print("Processing %s."%(seq))
-      for frame in range(int(seq_dets[:,0].max())):
+    with open(os.path.join('output', '%s.txt'%(seq)),'w') as out_file:  # 比如：'output/ADL-Rundle-6.txt'
+      print("Processing %s."%(seq))                                     # 比如：Processing ADL-Rundle-6.
+      for frame in range(int(seq_dets[:,0].max())):                     # 比如：frame：0   range(int(seq_dets[:,0].max()))：range(0, 525)
         frame += 1 #detection and frame numbers begin at 1
-        dets = seq_dets[seq_dets[:, 0]==frame, 2:7]
-        dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2]
+        dets = seq_dets[seq_dets[:, 0]==frame, 2:7]                     # 比如：      dets: np.array( [ [1691.97, 381.048, 152.23,  352.617, 0.995616],[],.. ] )
+        dets[:, 2:4] += dets[:, 0:2] #convert to [x1,y1,w,h] to [x1,y1,x2,y2] # 比如：dets: np.array( [ [1691.97, 381.048, 1844.20, 733.665, 0.995616],[],.. ] )
         total_frames += 1
 
         if(display):
@@ -309,7 +309,7 @@ if __name__ == '__main__':
           plt.title(seq + ' Tracked Targets')
 
         start_time = time.time()
-        trackers = mot_tracker.update(dets)
+        trackers = mot_tracker.update(dets)     # 比如：dets: np.array( [ [1691.97, 381.048, 1844.20, 733.665, 0.995616],[],.. ] ) 302行  update返回新后验展示框集合：np.array( [ [x1,y1,x2,y2,展示id],[],.. ] )    展示id=id+1
         cycle_time = time.time() - start_time
         total_time += cycle_time
 

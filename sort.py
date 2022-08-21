@@ -127,7 +127,7 @@ class KalmanBoxTracker(object):
     self.time_since_update = 0
     self.history = []
     self.hits += 1          # 命中
-    self.hit_streak += 1    # 连续命中
+    self.hit_streak += 1    # 最近连续命中
     self.kf.update(convert_bbox_to_z(bbox)) # 关键行：卡尔曼滤波器更新，滤波器内的x修正为下一次的后验状态
                                             # 方法签名：update(z, R=None, H=None)  详见 https://filterpy.readthedocs.io/en/latest/kalman/KalmanFilter.html#filterpy.kalman.KalmanFilter.update
   def predict(self):
